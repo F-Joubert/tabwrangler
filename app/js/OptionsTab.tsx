@@ -1,6 +1,6 @@
 import * as React from "react";
 import { CSSTransition, TransitionGroup } from "react-transition-group";
-import { exportData, importData } from "./actions/importExportActions";
+import { exportSettings, importSettings, initialiseApp } from "./actions/importExportActions";
 import { useStorageSyncPersistQuery, useStorageSyncQuery } from "./storage";
 import FileSaver from "file-saver";
 import TabWrangleOption from "./TabWrangleOption";
@@ -24,8 +24,8 @@ export default function OptionsTab() {
   const fileSelectorRef = React.useRef<HTMLInputElement | null>(null);
   const importExportAlertTimeoutRef = React.useRef<number>();
   const theme: string = syncPersistData?.theme ?? "system";
-  const whitelist: string[] = syncData?.whitelist ?? [];
-  const targetTitles: string[] = syncData?.targetTitles ?? [];
+  const whitelist: string[] = settings.get("whitelist") ?? [];
+  const targetTitles: string[] = settings.get("targetTitles") ?? [];
   const [errors, setErrors] = React.useState<Error[]>([]);
   const [importExportAlertVisible, setImportExportAlertVisible] = React.useState(false);
   const [importExportErrors, setImportExportErrors] = React.useState<Error[]>([]);
@@ -46,15 +46,11 @@ export default function OptionsTab() {
   });
 
   function handleClickRemovePattern(pattern: string) {
-    const nextWhitelist = whitelist.slice();
-    nextWhitelist.splice(whitelist.indexOf(pattern), 1);
-    settingMutation.mutate({ key: "whitelist", value: nextWhitelist });
+    settings.removeTargetUrl(pattern);
   }
 
   function handleClickRemoveTitle(pattern: string) {
-    const nextTargetTitles = targetTitles.slice();
-    nextTargetTitles.splice(targetTitles.indexOf(pattern), 1);
-    settingMutation.mutate({ key: "targetTitles", value: nextTargetTitles });
+    settings.removeTargetTitle(pattern);
   }
 
   React.useEffect(() => {
@@ -106,7 +102,7 @@ export default function OptionsTab() {
   if (importExportErrors.length === 0) {
     if (importExportAlertVisible) {
       importExportAlert = [
-        <CSSTransition classNames="alert" key="importExportAlert" timeout={400}>
+        <CSSTransition classNames="alert" key="importExportAlert" timeout={40}>
           <div className="alert-sticky">
             <div className="alert alert-success float-right">{importExportOperationName}</div>
           </div>
@@ -143,7 +139,7 @@ export default function OptionsTab() {
     setSaveAlertVisible(true);
     saveAlertTimeoutRef.current = window.setTimeout(() => {
       setSaveAlertVisible(false);
-    }, 400);
+    }, 40);
   }
 
   const debouncedHandleSettingsChange = useDebounceCallback(
@@ -166,10 +162,7 @@ export default function OptionsTab() {
       return;
     }
 
-    // Only add the pattern again if it's new, not yet in the whitelist.
-    if (whitelist.indexOf(newPattern) === -1) {
-      settingMutation.mutate({ key: "whitelist", value: [...whitelist, newPattern] });
-    }
+    settings.addTargetUrl(newPattern);
 
     setNewPattern("");
   }
@@ -181,10 +174,7 @@ export default function OptionsTab() {
       return;
     }
 
-    // Only add the pattern again if it's new, not yet in the targetTitles.
-    if (targetTitles.indexOf(titlePattern) === -1) {
-      settingMutation.mutate({ key: "targetTitles", value: [...targetTitles, titlePattern] });
-    }
+    settings.addTargetTitle(titlePattern);
 
     setTitlePattern("");
   }
@@ -205,7 +195,7 @@ export default function OptionsTab() {
     }
 
     setImportExportErrors([]);
-    setImportExportAlertVisible(true);
+    setImportExportAlertVisible(false);
     setImportExportOperationName(operationName);
 
     (func(funcArg) as Promise<Blob>)
@@ -213,17 +203,17 @@ export default function OptionsTab() {
         if (onSuccess != null) onSuccess(blob);
         importExportAlertTimeoutRef.current = window.setTimeout(() => {
           setImportExportAlertVisible(false);
-        }, 400);
+        }, 5);
       })
       .catch((err: Error) => {
         setImportExportErrors((currImportExportErrors) => [...currImportExportErrors, err]);
       });
   }
 
-  function handleExportData(event: React.MouseEvent<HTMLButtonElement>) {
+  function handleExportSettings(event: React.MouseEvent<HTMLButtonElement>) {
     importExportDataWithFeedback(
       chrome.i18n.getMessage("options_importExport_exporting") || "",
-      exportData,
+      exportSettings,
       event,
       (blob) => {
         FileSaver.saveAs(blob, exportFileName(new Date(Date.now())));
@@ -231,10 +221,18 @@ export default function OptionsTab() {
     );
   }
 
-  function handleImportData(event: React.FormEvent<HTMLInputElement>) {
+  function handleImportSettings(event: React.FormEvent<HTMLInputElement>) {
     importExportDataWithFeedback(
       chrome.i18n.getMessage("options_importExport_importing") || "",
-      importData,
+      importSettings,
+      event,
+    );
+  }
+
+  function handleInitialiseApp(event: React.MouseEvent<HTMLButtonElement>) {
+    importExportDataWithFeedback(
+      chrome.i18n.getMessage("options_initialiseApp_initialising") || "",
+      initialiseApp,
       event,
     );
   }
@@ -609,11 +607,11 @@ export default function OptionsTab() {
 
       <h5 className="mt-3">{chrome.i18n.getMessage("options_section_importExport")}</h5>
       <div className="row">
-        <div className="col-8">{chrome.i18n.getMessage("options_importExport_description")}</div>
+        <div className="col-8">{chrome.i18n.getMessage("options_importExportSettings_description")}</div>
       </div>
       <div className="row my-2">
         <div className="col-8 mb-1">
-          <button className="btn btn-secondary" onClick={handleExportData}>
+          <button className="btn btn-secondary" onClick={handleExportSettings}>
             <i className="fas fa-file-export me-1" />
             {chrome.i18n.getMessage("options_importExport_export")}
           </button>{" "}
@@ -628,7 +626,7 @@ export default function OptionsTab() {
           </button>
           <input
             accept=".json"
-            onChange={handleImportData}
+            onChange={handleImportSettings}
             ref={(input) => {
               fileSelectorRef.current = input;
             }}
@@ -640,7 +638,39 @@ export default function OptionsTab() {
       <div className="row">
         <div className="col-8">
           <div className="alert alert-warning">
-            {chrome.i18n.getMessage("options_importExport_importWarning")}
+            {chrome.i18n.getMessage("options_importExportSettings_importWarning")}
+          </div>
+        </div>
+      </div>
+      {importExportErrors.length === 0 ? (
+        <TransitionGroup appear={false}>{importExportAlert}</TransitionGroup>
+      ) : (
+        importExportAlert
+      )}
+      {errors.length === 0 ? (
+        <TransitionGroup appear={false}>{saveAlert}</TransitionGroup>
+      ) : (
+        errorAlert
+      )}
+
+      <h5 className="mt-3">{chrome.i18n.getMessage("options_section_initialiseApp")}</h5>
+      <div className="row">
+        <div className="col-8">{chrome.i18n.getMessage("options_initialiseApp_description")}</div>
+      </div>
+      <div className="row my-2">
+        <div className="col-8 mb-1">
+          <button
+            className="btn btn-secondary"
+            onClick={handleInitialiseApp}>
+            <i className="fas fa-file-import me-1" />
+            {chrome.i18n.getMessage("options_initialiseApp_initialise")}
+          </button>
+        </div>
+      </div>
+      <div className="row">
+        <div className="col-8">
+          <div className="alert alert-warning">
+            {chrome.i18n.getMessage("options_initialiseApp_initialiseWarning")}
           </div>
         </div>
       </div>
